@@ -32,6 +32,8 @@ class WorkflowParser:
         }
         self.loras = []
         self.uses_controlnet = False
+        self.uses_ai_prompt_enhancement = False
+        self.ai_prompt_enhancers = []  # List of AI enhancer nodes found
     
     def load_workflow_from_image(self) -> Dict[str, Any]:
         """
@@ -440,6 +442,72 @@ class WorkflowParser:
         
         return False
     
+    def detect_ai_prompt_enhancement(self) -> bool:
+        """
+        Detect if AI-based prompt enhancement is used in the workflow.
+        
+        Returns:
+            True if AI prompt enhancement is detected
+        """
+        # Known AI prompt enhancement node patterns
+        ai_enhancer_patterns = [
+            'llm',           # Large Language Models
+            'gpt',           # GPT models
+            'claude',        # Claude AI
+            'deepseek',      # DeepSeek AI
+            'prompt enhance', # Generic prompt enhancers
+            'prompt expand',
+            'prompt refine',
+            'prompt improve',
+            'ollama',        # Local LLM
+            'llama',         # LLaMA models
+            'mistral',       # Mistral AI
+            'gemini',        # Google Gemini
+            'qwen',          # Qwen models
+            'ai prompt',
+            'prompt ai',
+            'prompt writer',
+            'prompt generator',
+        ]
+        
+        for node_id, node_info in self.nodes.items():
+            class_type = node_info.get('class_type', '').lower()
+            detected = False
+            detection_reason = None
+            
+            # Check if node class type matches any AI enhancer pattern
+            for pattern in ai_enhancer_patterns:
+                if pattern in class_type:
+                    detected = True
+                    detection_reason = f"class type contains '{pattern}'"
+                    break
+            
+            # Also check widget values for AI model references
+            if not detected:
+                widgets_values = node_info.get('widgets_values', [])
+                if isinstance(widgets_values, list):
+                    for widget in widgets_values:
+                        if isinstance(widget, str):
+                            widget_lower = widget.lower()
+                            for pattern in ai_enhancer_patterns:
+                                if pattern in widget_lower:
+                                    detected = True
+                                    detection_reason = f"widget value contains '{pattern}'"
+                                    break
+                            if detected:
+                                break
+            
+            if detected:
+                self.uses_ai_prompt_enhancement = True
+                self.ai_prompt_enhancers.append({
+                    'node_id': node_id,
+                    'class_type': node_info.get('class_type', ''),
+                    'order': node_info.get('order', 999),
+                    'reason': detection_reason
+                })
+        
+        return self.uses_ai_prompt_enhancement
+    
     def _deduplicate_prompts(self):
         """Merge prompts with identical text, combining their connections."""
         for prompt_type in ['positive', 'negative']:
@@ -569,16 +637,43 @@ class WorkflowParser:
         
         return None
     
-    def _extract_prompt_text(self, node_info: Dict[str, Any]) -> Optional[str]:
+    def _has_text_input_connection(self, node_id: str) -> bool:
+        """
+        Check if a node has a connection to its text input.
+        
+        Args:
+            node_id: ID of the node to check
+            
+        Returns:
+            True if text input has a connection
+        """
+        # Check if any connection targets this node's text input
+        for conn_id, conn in self.connections.items():
+            if conn['target_node'] == node_id:
+                # Get the input name from the connection
+                input_name = self._get_input_name(node_id, conn['target_input'])
+                if input_name and input_name.lower() in ['text', 'prompt', 'string']:
+                    return True
+        return False
+    
+    def _extract_prompt_text(self, node_id: str, node_info: Dict[str, Any]) -> Optional[str]:
         """
         Extract prompt text from a node's widget values or inputs.
         
         Args:
+            node_id: ID of the node
             node_info: Node information dictionary
             
         Returns:
             Prompt text if found, None otherwise
         """
+        # For CLIPTextEncode nodes, check if text input has a connection
+        # If it does, ignore widget_values and let _extract_prompt_text_with_trace handle it
+        class_type = node_info.get('class_type', '').lower()
+        if 'clip' in class_type and 'encode' in class_type:
+            if self._has_text_input_connection(node_id):
+                return None  # Text comes from connection, not widget
+        
         # Check widget_values (common in CLIPTextEncode)
         if 'widgets_values' in node_info:
             widgets = node_info['widgets_values']
@@ -620,34 +715,50 @@ class WorkflowParser:
             return None
         visited.add(node_id)
         
-        # First try to get text directly from this node
-        direct_text = self._extract_prompt_text(node_info)
-        if direct_text:
-            return direct_text
+        class_type = node_info.get('class_type', '').lower()
         
-        # If no direct text, check if this node has text/string inputs that are connections
+        # Check if this node has text/string input connections first
+        has_text_connection = False
         if node_id in self.io_map:
             inputs = self.io_map[node_id].get('inputs', {})
             
-            # Look for text/string inputs
+            # Look for text/string inputs with connections
             for input_name, input_info in inputs.items():
                 if input_info.get('type', '').upper() in ['STRING', 'TEXT']:
-                    # Find the connection that feeds this input
-                    # Need to check both by name and by index
+                    # Check if this input has a connection
                     for conn_id, conn in self.connections.items():
                         if conn['target_node'] == node_id:
-                            # Get the actual input name from the connection
                             conn_input_name = self._get_input_name(node_id, conn['target_input'])
-                            
                             if conn_input_name == input_name:
+                                has_text_connection = True
                                 # Trace back to the source node
                                 source_node_id = conn['source_node']
                                 if source_node_id in self.nodes:
                                     source_node_info = self.nodes[source_node_id]
+                                    source_class = source_node_info.get('class_type', '').lower()
+                                    
+                                    # Check if source is a text literal node
+                                    is_text_literal = (
+                                        'string' in source_class and 'literal' in source_class or
+                                        'text' in source_class and 'multiline' in source_class
+                                    )
+                                    
                                     # Recursively extract text from source
                                     text = self._extract_prompt_text_with_trace(source_node_id, source_node_info, visited)
                                     if text:
                                         return text
+        
+        # Only try to get text from widget values if there's NO text connection
+        # OR if this is a known text literal node
+        is_text_literal = (
+            'string' in class_type and 'literal' in class_type or
+            'text' in class_type and 'multiline' in class_type
+        )
+        
+        if not has_text_connection or is_text_literal:
+            direct_text = self._extract_prompt_text(node_id, node_info)
+            if direct_text:
+                return direct_text
         
         return None
     
@@ -665,6 +776,7 @@ class WorkflowParser:
         self.detect_prompts()
         self.detect_loras()
         self.detect_controlnet()
+        self.detect_ai_prompt_enhancement()
         
         return self.nodes, self.io_map, self.connections, self.prompts, self.loras
     
@@ -821,6 +933,13 @@ def main():
         # Display ControlNet warning
         if parser.uses_controlnet:
             print(f"\n⚠️  CONTROLNET DETECTED - This workflow uses ControlNet nodes")
+        
+        # Display AI Prompt Enhancement warning
+        if parser.uses_ai_prompt_enhancement:
+            print(f"\n🤖 AI PROMPT ENHANCEMENT DETECTED")
+            print(f"   The displayed prompts may have been modified by AI:")
+            for enhancer in parser.ai_prompt_enhancers:
+                print(f"   - {enhancer['class_type']} (Node {enhancer['node_id']})")
         
         # Display LoRAs
         if loras:

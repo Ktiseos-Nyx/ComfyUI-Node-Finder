@@ -19,6 +19,8 @@ from comfyui_scanner import ComfyUIScanner
 class GitHubNodeFinder:
     """Find GitHub repositories for ComfyUI node classes."""
     
+    REGISTRY_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json"
+    
     def __init__(self, github_token: str):
         """
         Initialize the GitHub node finder.
@@ -44,10 +46,96 @@ class GitHubNodeFinder:
         
         # Cache to avoid duplicate searches
         self.cache = {}
+        
+        # ComfyUI Manager registry cache
+        self.registry = None
+        self.registry_by_title = {}
+        self.registry_by_reference = {}
+    
+    def load_comfyui_registry(self) -> bool:
+        """
+        Load the ComfyUI Manager registry of custom nodes.
+        
+        Returns:
+            True if loaded successfully
+        """
+        if self.registry is not None:
+            return True  # Already loaded
+        
+        try:
+            print("📥 Loading ComfyUI Manager registry...")
+            response = requests.get(self.REGISTRY_URL, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.registry = data.get('custom_nodes', [])
+                
+                # Build lookup dictionaries
+                for node in self.registry:
+                    title = node.get('title', '').lower()
+                    reference = node.get('reference', '').lower()
+                    
+                    if title:
+                        self.registry_by_title[title] = node
+                    if reference:
+                        self.registry_by_reference[reference] = node
+                
+                print(f"✓ Loaded {len(self.registry)} custom nodes from registry")
+                return True
+            else:
+                print(f"⚠ Failed to load registry: HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            print(f"⚠ Error loading registry: {e}")
+            return False
+    
+    def search_in_registry(self, class_name: str) -> Optional[Dict]:
+        """
+        Search for a node in the ComfyUI Manager registry.
+        
+        Args:
+            class_name: The node class name to search for
+            
+        Returns:
+            Dictionary with repository info or None if not found
+        """
+        if not self.load_comfyui_registry():
+            return None
+        
+        class_lower = class_name.lower()
+        
+        # Try exact title match
+        if class_lower in self.registry_by_title:
+            node = self.registry_by_title[class_lower]
+            return {
+                'repo_name': node.get('reference', '').split('/')[-1],
+                'repo_url': node.get('reference', ''),
+                'description': node.get('description', ''),
+                'author': node.get('author', 'unknown'),
+                'title': node.get('title', class_name)
+            }
+        
+        # Try fuzzy search in titles and descriptions
+        for node in self.registry:
+            title = node.get('title', '').lower()
+            description = node.get('description', '').lower()
+            
+            # Check if class name appears in title or description
+            if class_lower in title or class_lower in description:
+                return {
+                    'repo_name': node.get('reference', '').split('/')[-1],
+                    'repo_url': node.get('reference', ''),
+                    'description': node.get('description', ''),
+                    'author': node.get('author', 'unknown'),
+                    'title': node.get('title', class_name)
+                }
+        
+        return None
     
     def search_node_class(self, class_name: str) -> Optional[Dict]:
         """
-        Search GitHub for a ComfyUI node class.
+        Search for a ComfyUI node class, first in registry then GitHub.
         
         Args:
             class_name: The node class name to search for
@@ -58,6 +146,12 @@ class GitHubNodeFinder:
         # Check cache first
         if class_name in self.cache:
             return self.cache[class_name]
+        
+        # Try ComfyUI Manager registry first (no rate limits!)
+        registry_result = self.search_in_registry(class_name)
+        if registry_result:
+            self.cache[class_name] = registry_result
+            return registry_result
         
         # Search GitHub code for the class name
         search_query = f"{class_name} comfyui"
@@ -77,12 +171,44 @@ class GitHubNodeFinder:
                 return None
             
             if response.status_code == 403:
-                print(f"  ⚠ Rate limit exceeded. Wait before making more requests.")
                 # Check if it's rate limit or token issue
                 if 'X-RateLimit-Remaining' in response.headers:
                     remaining = response.headers['X-RateLimit-Remaining']
-                    reset_time = response.headers.get('X-RateLimit-Reset', 'unknown')
-                    print(f"     Remaining: {remaining}, Resets at: {reset_time}")
+                    limit = response.headers.get('X-RateLimit-Limit', 'unknown')
+                    reset_timestamp = response.headers.get('X-RateLimit-Reset')
+                    
+                    print(f"  ⚠ Rate limit exceeded!")
+                    print(f"     Search API Limit: {limit} requests per minute")
+                    print(f"     Remaining: {remaining}")
+                    
+                    if reset_timestamp and remaining == '0':
+                        # Calculate wait time
+                        reset_time = int(reset_timestamp)
+                        current_time = int(time.time())
+                        wait_seconds = reset_time - current_time + 5  # Add 5 second buffer
+                        
+                        if wait_seconds > 0:
+                            print(f"     Waiting {wait_seconds} seconds until reset...")
+                            # Show countdown for long waits
+                            if wait_seconds > 10:
+                                for remaining_time in range(wait_seconds, 0, -10):
+                                    print(f"     ... {remaining_time} seconds remaining")
+                                    time.sleep(10)
+                                # Sleep any remaining seconds
+                                time.sleep(wait_seconds % 10)
+                            else:
+                                time.sleep(wait_seconds)
+                            print(f"  ✓ Rate limit reset. Retrying search...")
+                            # Retry the request
+                            return self.search_node_class(class_name)
+                        else:
+                            print(f"  ⚠ Rate limit should be reset. Retrying...")
+                            return self.search_node_class(class_name)
+                    else:
+                        print(f"     Try again in a minute.")
+                        return None
+                else:
+                    print(f"  ⚠ Access forbidden. Check your GitHub token permissions.")
                 return None
             
             if response.status_code != 200:

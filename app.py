@@ -12,6 +12,7 @@ Usage:
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -79,6 +80,13 @@ def display_workflow_summary(parser: WorkflowParser, nodes: Dict, prompts: Dict,
         print(f"   This workflow uses ControlNet nodes. Make sure you have:")
         print(f"   - ControlNet models installed")
         print(f"   - Compatible ControlNet custom nodes")
+    
+    # AI Prompt Enhancement warning
+    if parser.uses_ai_prompt_enhancement:
+        print(f"\n🤖 AI PROMPT ENHANCEMENT DETECTED")
+        print(f"   The displayed prompts may have been modified by AI:")
+        for enhancer in parser.ai_prompt_enhancers:
+            print(f"   - {enhancer['class_type']} (Node {enhancer['node_id']})")
     
     # Display LoRAs
     if loras:
@@ -171,22 +179,28 @@ def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIS
             github_token = token_mgr.get_or_prompt_token(auto_use=True)
             
             if not github_token:
-                print("\n⚠️  No GitHub token provided. Searching without authentication (rate limited).")
+                print("\n⚠️  No GitHub token provided. Cannot search GitHub.")
+                return
             
             # Initialize finder
-            finder = GitHubNodeFinder(github_token=github_token, comfyui_path=comfyui_path)
+            finder = GitHubNodeFinder(github_token=github_token)
             
             # Search for unknown nodes
             print(f"\n🔍 Searching GitHub for {len(unknown_nodes)} node(s)...")
+            print(f"   (Adding delays to avoid rate limiting...)")
             results = {}
-            for node_name in unknown_nodes:
-                result = finder.search_node(node_name)
+            for i, node_name in enumerate(unknown_nodes, 1):
+                result = finder.search_node_class(node_name)
                 results[node_name] = result
                 
                 if result:
-                    print(f"   ✓ Found: {node_name} -> {result['repo_name']}")
+                    print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {result['repo_name']}")
                 else:
-                    print(f"   ✗ Not found: {node_name}")
+                    print(f"   [{i}/{len(unknown_nodes)}] ✗ Not found: {node_name}")
+                
+                # Add delay between requests to avoid rate limiting (except for last one)
+                if i < len(unknown_nodes):
+                    time.sleep(2)  # 2 second delay between searches
             
             # Handle found repositories
             if any(results.values()):
