@@ -521,7 +521,7 @@
         512,
         true,
         100,
-        0,
+        1,
         "%Y-%m-%d-%H%M%S"
       ],
       "order": 30,
@@ -538,7 +538,7 @@
         "1": 82
       },
       "widgets_values": [
-        0,
+        1,
         "increment"
       ],
       "order": 13,
@@ -1570,9 +1570,82 @@
       "type": "INT"
     }
   },
+  "prompts": {
+    "positive": [
+      {
+        "node_id": "93, 69",
+        "class_type": "CLIPTextEncode",
+        "text": "(extremely detailed dutch angle, high quality, best quality, masterpiece:1.2), official art, official wallpaper,\n\n(night sky, alien planet, moon, ethereal glow:1.2),\n\n(detailed:1.05), (extremely detailed:1.06), sharp focus, (intricate:1.03), (extremely intricate:1.04), (epic scenery:1.09), vibrant colors, (beautiful scenery:1.08), (detailed scenery:1.08), (intricate scenery:1.07), (wonderful scenery:1.05)",
+        "type": "positive",
+        "order": 18,
+        "connects_to": [
+          {
+            "node_id": "32",
+            "class_type": "KSampler (Efficient)",
+            "order": 22
+          },
+          {
+            "node_id": "92",
+            "class_type": "KSampler (Efficient)",
+            "order": 28
+          }
+        ]
+      }
+    ],
+    "negative": [
+      {
+        "node_id": "71",
+        "class_type": "CLIPTextEncode",
+        "text": "(horse:1.5), (low quality:1.32), (normal quality:1.31), (worst quality:1.33), (bad anatomy), (bad Hands), (mutated limbs:1.2), (mutated hands, mutated fingers:1.2), (deformed hands:1.2), (text:1.5), simple background, hat,",
+        "type": "negative",
+        "order": 16,
+        "connects_to": [
+          {
+            "node_id": "32",
+            "class_type": "KSampler (Efficient)",
+            "order": 22
+          },
+          {
+            "node_id": "92",
+            "class_type": "KSampler (Efficient)",
+            "order": 28
+          }
+        ]
+      }
+    ]
+  },
+  "loras": [
+    {
+      "node_id": "83",
+      "class_type": "LoraLoader",
+      "lora_name": "LCM_SD_15.safetensors",
+      "model_strength": 0.75,
+      "clip_strength": 0.75,
+      "order": 17
+    },
+    {
+      "node_id": "84",
+      "class_type": "LoraLoader",
+      "lora_name": "epi_noiseoffset2.safetensors",
+      "model_strength": 0.5,
+      "clip_strength": 0.5,
+      "order": 19
+    },
+    {
+      "node_id": "85",
+      "class_type": "LoraLoader",
+      "lora_name": "character-sheet-03.safetensors",
+      "model_strength": 1.25,
+      "clip_strength": 1.25,
+      "order": 20
+    }
+  ],
   "metadata": {
-    "source_image": "D:\\StableDiffusion\\ComfyUI\\output\\Alien Planets\\Alien Planet0_494355360762884.png",
+    "source_image": "D:\\StableDiffusion\\ComfyUI\\output\\Alien Planets\\Alien Planet1_960919378455518.png",
     "total_nodes": 31,
-    "total_connections": 52
+    "total_connections": 52,
+    "positive_prompts": 1,
+    "negative_prompts": 1,
+    "loras_used": 3
   }
 }

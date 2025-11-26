@@ -1,0 +1,64 @@
+{
+  "summary": {
+    "total_searched": 6,
+    "found": 6,
+    "not_found": 0
+  },
+  "found_nodes": {
+    "String Literal": {
+      "class_name": "String Literal",
+      "repo_name": "comfy-image-saver",
+      "repo_url": "(local installation: comfy-image-saver)",
+      "description": "Already installed locally",
+      "stars": 0,
+      "file_path": "local",
+      "file_url": "local"
+    },
+    "Seed (rgthree)": {
+      "class_name": "Seed (rgthree)",
+      "repo_name": "rgthree-comfy",
+      "repo_url": "(local installation: rgthree-comfy)",
+      "description": "Already installed locally",
+      "stars": 0,
+      "file_path": "local",
+      "file_url": "local"
+    },
+    "KSampler (Efficient)": {
+      "class_name": "KSampler (Efficient)",
+      "repo_name": "efficiency-nodes-comfyui",
+      "repo_url": "(local installation: efficiency-nodes-comfyui)",
+      "description": "Already installed locally",
+      "stars": 0,
+      "file_path": "local",
+      "file_url": "local"
+    },
+    "Save Image w/Metadata": {
+      "class_name": "Save Image w/Metadata",
+      "repo_name": "comfy-image-saver",
+      "repo_url": "(local installation: comfy-image-saver)",
+      "description": "Already installed locally",
+      "stars": 0,
+      "file_path": "local",
+      "file_url": "local"
+    },
+    "Int Literal": {
+      "class_name": "Int Literal",
+      "repo_name": "comfy-image-saver",
+      "repo_url": "(local installation: comfy-image-saver)",
+      "description": "Already installed locally",
+      "stars": 0,
+      "file_path": "local",
+      "file_url": "local"
+    },
+    "PrimitiveNode": {
+      "class_name": "PrimitiveNode",
+      "repo_name": "AIGODLIKE/ComfyUI-BlenderAI-node",
+      "repo_url": "https://github.com/AIGODLIKE/ComfyUI-BlenderAI-node",
+      "description": "Used for AI model generation, next-generation Blender rendering engine, texture enhancement&generation (based on ComfyUI)",
+      "stars": 0,
+      "file_path": "SDNode/blueprints.py",
+      "file_url": "https://github.com/AIGODLIKE/ComfyUI-BlenderAI-node/blob/b6729c96797e340c7688de00e547f1c41372ec76/SDNode/blueprints.py"
+    }
+  },
+  "not_found_nodes": []
+}

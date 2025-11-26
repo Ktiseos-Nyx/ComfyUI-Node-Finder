@@ -2,9 +2,55 @@
 COMFYUI WORKFLOW ANALYSIS
 ================================================================================
 
-Source Image: D:\StableDiffusion\ComfyUI\output\Alien Planets\Alien Planet0_494355360762884.png
+Source Image: D:\StableDiffusion\ComfyUI\output\Alien Planets\Alien Planet1_960919378455518.png
 Total Nodes: 31
 Total Connections: 52
+Positive Prompts: 1
+Negative Prompts: 1
+LoRAs Used: 3
+
+================================================================================
+LORAS USED
+================================================================================
+
+  [1] LCM_SD_15.safetensors
+      Node: 83 (LoraLoader) - Order: 17
+      Model Strength: 0.75
+      CLIP Strength: 0.75
+
+  [2] epi_noiseoffset2.safetensors
+      Node: 84 (LoraLoader) - Order: 19
+      Model Strength: 0.5
+      CLIP Strength: 0.5
+
+  [3] character-sheet-03.safetensors
+      Node: 85 (LoraLoader) - Order: 20
+      Model Strength: 1.25
+      CLIP Strength: 1.25
+
+================================================================================
+DETECTED PROMPTS
+================================================================================
+
+POSITIVE PROMPTS:
+
+  [1] Node 93, 69 (CLIPTextEncode) - Order: 18
+      Text: (extremely detailed dutch angle, high quality, best quality, masterpiece:1.2), official art, official wallpaper,
+
+(night sky, alien planet, moon, ethereal glow:1.2),
+
+(detailed:1.05), (extremely detailed:1.06), sharp focus, (intricate:1.03), (extremely intricate:1.04), (epic scenery:1.09), vibrant colors, (beautiful scenery:1.08), (detailed scenery:1.08), (intricate scenery:1.07), (wonderful scenery:1.05)
+      Connects to:
+        → Node 32 (KSampler (Efficient)) - Order: 22
+        → Node 92 (KSampler (Efficient)) - Order: 28
+
+NEGATIVE PROMPTS:
+
+  [1] Node 71 (CLIPTextEncode) - Order: 16
+      Text: (horse:1.5), (low quality:1.32), (normal quality:1.31), (worst quality:1.33), (bad anatomy), (bad Hands), (mutated limbs:1.2), (mutated hands, mutated fingers:1.2), (deformed hands:1.2), (text:1.5), simple background, hat,
+      Connects to:
+        → Node 32 (KSampler (Efficient)) - Order: 22
+        → Node 92 (KSampler (Efficient)) - Order: 28
 
 ================================================================================
 NODES DICTIONARY
@@ -246,7 +292,7 @@ Node ID: 65
   class_type: Save Image w/Metadata
   pos: [1313, 226]
   size: [400, 634]
-  widgets_values: ['Alien Planet%counter_%seed', 'Alien Planets', 'png', 20, 1.5, 'darkphoenix3D_v12.safetensors', 'lcm', 'karras', 'unknown', 'unknown', 0, 512, 512, True, 100, 0, '%Y-%m-%d-%H%M%S']
+  widgets_values: ['Alien Planet%counter_%seed', 'Alien Planets', 'png', 20, 1.5, 'darkphoenix3D_v12.safetensors', 'lcm', 'karras', 'unknown', 'unknown', 0, 512, 512, True, 100, 1, '%Y-%m-%d-%H%M%S']
   order: 30
   mode: 0
 
@@ -254,7 +300,7 @@ Node ID: 87
   class_type: PrimitiveNode
   pos: [1073, 419]
   size: {'0': 210, '1': 82}
-  widgets_values: [0, 'increment']
+  widgets_values: [1, 'increment']
   order: 13
   mode: 0
 
