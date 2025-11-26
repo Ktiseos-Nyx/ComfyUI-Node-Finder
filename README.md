@@ -1,19 +1,45 @@
 # ComfyUI-Node-Finder
-Search a git url for CUI nodes
+
+Analyze ComfyUI workflow images to identify missing custom nodes and automatically find their GitHub repositories.
+
+## Quick Start
+
+1. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Run the application:**
+   ```bash
+   python app.py
+   ```
+
+3. **Follow the prompts:**
+   - Provide your GitHub token (required - see [GitHub Token](#github-token-required) section)
+   - Specify your ComfyUI installation path
+   - Select a workflow PNG image to analyze
+
+The tool will:
+- Extract workflow metadata (nodes, prompts, LoRAs)
+- Identify missing custom nodes
+- Search for repositories using Comfy Registry and GitHub
+- Offer to download missing nodes directly to your `custom_nodes` folder
+
+## Features
+
+- 🔍 **Workflow Analysis** - Extract prompts, LoRAs, and node information from PNG images
+- 🎯 **Smart Node Detection** - Identifies built-in, installed, and missing custom nodes
+- 📦 **Automatic Repository Discovery** - Searches Comfy Registry and GitHub for missing nodes
+- ⚡ **Intelligent Caching** - Caches scan results and registry data to avoid redundant work
+- 🚀 **One-Click Installation** - Clone repositories directly to your ComfyUI installation
+- 🔄 **Conditioning Chain Tracing** - Accurately extracts prompts from complex conditioning workflows
+- 🚫 **Disabled Node Filtering** - Ignores muted/disabled nodes when extracting prompts
 
 ## Workflow Parser
 
 Parse ComfyUI workflow metadata from PNG images and extract structured data about nodes, inputs/outputs, and connections.
 
-### Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-### Usage
-
-#### Command Line
+### Command Line Usage
 
 ```bash
 # Parse workflow and save to JSON
@@ -87,15 +113,17 @@ results = finder.search_all_nodes(nodes)
 finder.save_results(results, "node_repos.json")
 ```
 
-### Features
+### Node Search Features
 
+- **Comfy Registry Integration** - Downloads and caches the entire Comfy Registry for fast lookups
 - **Local ComfyUI scanning** - Identifies built-in and already-installed custom nodes
-- **Smart filtering** - Only searches GitHub for unknown nodes
+- **Smart filtering** - Only searches for unknown nodes not in registry or local installation
 - **Automatic classification** - Separates built-in, custom, and unknown nodes
 - **Interactive installation** - Download repos directly to custom_nodes or open in browser
 - **Git integration** - Clone repositories with one command
 - **Rate limit handling** with GitHub token support
-- **Caching** to avoid duplicate searches
+- **Persistent caching** - Caches scan results and registry data to avoid redundant work
+- **Change detection** - Only rescans custom_nodes directory when changes are detected
 - **Multiple search strategies** for better results
 - **JSON and text output** formats
 
