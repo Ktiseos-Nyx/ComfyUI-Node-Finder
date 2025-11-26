@@ -100,9 +100,72 @@ class GitHubNodeFinder:
             print(f"⚠ Error loading node map: {e}")
             return False
     
+    def search_node_class_all(self, class_name: str) -> List[Dict]:
+        """
+        Search for ALL repositories that provide a node class.
+        Scans the entire extension-node-map to find all repos containing this node.
+        
+        Args:
+            class_name: The node class name to search for
+            
+        Returns:
+            List of dictionaries with repository info (may be empty)
+        """
+        results = []
+        seen_repos = set()
+        
+        # Load the raw node map data
+        if not self.load_node_map():
+            return results
+        
+        try:
+            import requests
+            response = requests.get(self.NODE_MAP_URL, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Scan through ALL repos to find which ones contain this node
+                for repo_url, node_data in data.items():
+                    if isinstance(node_data, list) and len(node_data) > 0:
+                        node_classes = node_data[0]
+                        metadata = node_data[1] if len(node_data) > 1 and isinstance(node_data[1], dict) else {}
+                        
+                        # Check if node is in the explicit list
+                        if isinstance(node_classes, list) and class_name in node_classes:
+                            if repo_url not in seen_repos:
+                                seen_repos.add(repo_url)
+                                results.append({
+                                    'repo_name': repo_url.split('/')[-1],
+                                    'repo_url': repo_url,
+                                    'description': f'Found in ComfyUI Manager node map',
+                                    'author': repo_url.split('/')[-2] if '/' in repo_url else 'unknown',
+                                    'title': class_name,
+                                    'source': 'node_map'
+                                })
+                        
+                        # Check if node matches the pattern
+                        if metadata.get('nodename_pattern'):
+                            import re
+                            pattern = re.compile(metadata['nodename_pattern'])
+                            if pattern.search(class_name) and repo_url not in seen_repos:
+                                seen_repos.add(repo_url)
+                                results.append({
+                                    'repo_name': repo_url.split('/')[-1],
+                                    'repo_url': repo_url,
+                                    'description': f'Found in ComfyUI Manager node map (pattern match)',
+                                    'author': repo_url.split('/')[-2] if '/' in repo_url else 'unknown',
+                                    'title': class_name,
+                                    'source': 'node_map'
+                                })
+        except Exception as e:
+            print(f"⚠ Error searching all repos: {e}")
+        
+        return results
+    
     def search_node_class(self, class_name: str) -> Optional[Dict]:
         """
         Search for a ComfyUI node class in node map, then fall back to GitHub.
+        Returns the first match found.
         
         Args:
             class_name: The node class name to search for
@@ -114,37 +177,12 @@ class GitHubNodeFinder:
         if class_name in self.cache:
             return self.cache[class_name]
         
-        # Try extension-node map first (exact class name → repo URL mapping!)
-        if not self.load_node_map():
-            print("⚠ Failed to load node map, falling back to GitHub search")
-        else:
-            # Check exact match first
-            if class_name in self.node_map:
-                repo_url = self.node_map[class_name]
-                result = {
-                    'repo_name': repo_url.split('/')[-1],
-                    'repo_url': repo_url,
-                    'description': f'Found in ComfyUI Manager node map',
-                    'author': repo_url.split('/')[-2] if '/' in repo_url else 'unknown',
-                    'title': class_name,
-                    'source': 'node_map'
-                }
-                self.cache[class_name] = result
-                return result
-            
-            # Check pattern matches (e.g., rgthree nodes with "(rgthree)" suffix)
-            for pattern, repo_url in self.node_patterns:
-                if pattern.search(class_name):
-                    result = {
-                        'repo_name': repo_url.split('/')[-1],
-                        'repo_url': repo_url,
-                        'description': f'Found in ComfyUI Manager node map (pattern match)',
-                        'author': repo_url.split('/')[-2] if '/' in repo_url else 'unknown',
-                        'title': class_name,
-                        'source': 'node_map'
-                    }
-                    self.cache[class_name] = result
-                    return result
+        # Get all matches and return the first one
+        all_results = self.search_node_class_all(class_name)
+        if all_results:
+            result = all_results[0]
+            self.cache[class_name] = result
+            return result
         
         # Search GitHub code for the class name
         # Remove parentheses and special chars that break GitHub search

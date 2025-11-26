@@ -176,8 +176,7 @@ class ComfyUIScanner:
             return {}
         
         print("\n🔍 Scanning custom nodes...")
-        
-        # Scan each subdirectory in custom_nodes
+                # Scan each subdirectory in custom_nodes
         for repo_dir in custom_nodes_dir.iterdir():
             if not repo_dir.is_dir():
                 continue
@@ -185,23 +184,41 @@ class ComfyUIScanner:
             if repo_dir.name.startswith('.'):
                 continue
             
-            # Scan all Python files in this repo
+            # First, try to load NODE_CLASS_MAPPINGS from __init__.py ONLY
+            init_file = repo_dir / "__init__.py"
+            if init_file.exists():
+                try:
+                    # Try static AST extraction first
+                    mappings = self._extract_node_mappings(init_file)
+                    
+                    # If no mappings found, try static analysis for dynamic names
+                    if not mappings:
+                        from static_node_analyzer import StaticNodeAnalyzer
+                        analyzer = StaticNodeAnalyzer(repo_dir)
+                        mappings = analyzer.extract_node_mappings(init_file)
+                        if mappings:
+                            print(f"   ✓ Found {len(mappings)} dynamic nodes in {repo_dir.name}")
+                    
+                    if mappings:
+                        for display_name, class_name in mappings.items():
+                            # Store both the display name and class name
+                            self.custom_nodes[display_name] = str(repo_dir.name)
+                            self.custom_nodes[class_name] = str(repo_dir.name)
+                except Exception as e:
+                    import traceback
+                    print(f"   ⚠ Error scanning {repo_dir.name}: {e}")
+                    traceback.print_exc()
+            
+            # Then scan all Python files for class definitions (fallback)
             for py_file in repo_dir.rglob("*.py"):
-                # Skip __pycache__ and other non-init __ files, but keep __init__.py
-                if py_file.name.startswith('__') and py_file.name != '__init__.py':
+                # Skip __pycache__ and other __ files
+                if py_file.name.startswith('__'):
                     continue
                 
                 try:
                     nodes = self._extract_node_classes(py_file)
                     for node_class in nodes:
                         self.custom_nodes[node_class] = str(repo_dir.name)
-                    
-                    # Also extract NODE_CLASS_MAPPINGS if present (especially in __init__.py)
-                    mappings = self._extract_node_mappings(py_file)
-                    for display_name, class_name in mappings.items():
-                        # Store both the display name and class name
-                        self.custom_nodes[display_name] = str(repo_dir.name)
-                        self.custom_nodes[class_name] = str(repo_dir.name)
                 except:
                     pass
         
@@ -271,8 +288,69 @@ class ComfyUIScanner:
                                         class_name = value.id
                                         mappings[display_name] = class_name
             
+            # TODO: Add static analysis for dynamic NODE_CLASS_MAPPINGS
+            # For now, rely on extension-node-map pattern matching for dynamic nodes
+            
         except Exception as e:
             # Silently skip files that can't be parsed
+            pass
+        
+        return mappings
+    
+    def _execute_for_mappings(self, file_path: Path) -> Dict[str, str]:
+        """
+        Execute a Python file to extract NODE_CLASS_MAPPINGS.
+        Used for files with dynamic node name generation (e.g., rgthree).
+        ONLY use this on __init__.py files to minimize risk.
+        
+        Args:
+            file_path: Path to Python file
+            
+        Returns:
+            Dictionary mapping display names to class names
+        """
+        import sys
+        import importlib.util
+        import io
+        import contextlib
+        
+        mappings = {}
+        
+        # Safety check - only execute __init__.py files
+        if file_path.name != '__init__.py':
+            return mappings
+        
+        try:
+            # Suppress stdout/stderr to prevent spam from package installations
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                # Add the parent directory to sys.path temporarily
+                parent_dir = str(file_path.parent)
+                if parent_dir not in sys.path:
+                    sys.path.insert(0, parent_dir)
+                
+                # Load the module
+                spec = importlib.util.spec_from_file_location("temp_module", file_path)
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    # Extract NODE_CLASS_MAPPINGS if it exists
+                    if hasattr(module, 'NODE_CLASS_MAPPINGS'):
+                        node_mappings = getattr(module, 'NODE_CLASS_MAPPINGS')
+                        if isinstance(node_mappings, dict):
+                            for display_name, class_ref in node_mappings.items():
+                                # Get the class name (might be a class object or string)
+                                if isinstance(class_ref, type):
+                                    mappings[display_name] = class_ref.__name__
+                                elif isinstance(class_ref, str):
+                                    mappings[display_name] = class_ref
+                
+                # Clean up sys.path
+                if parent_dir in sys.path:
+                    sys.path.remove(parent_dir)
+                
+        except Exception:
+            # Silently fail - dynamic execution is risky
             pass
         
         return mappings

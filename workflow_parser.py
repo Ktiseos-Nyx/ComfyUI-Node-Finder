@@ -31,6 +31,7 @@ class WorkflowParser:
             'negative': []
         }
         self.loras = []
+        self.models = []  # List of checkpoint/model files used
         self.uses_controlnet = False
         self.uses_ai_prompt_enhancement = False
         self.ai_prompt_enhancers = []  # List of AI enhancer nodes found
@@ -343,11 +344,26 @@ class WorkflowParser:
             if is_modifier:
                 continue
             
-            # Extract prompt text (may need to trace through connections)
-            prompt_text = self._extract_prompt_text_with_trace(node_id, node_info)
+            # Check if this is a dual-prompt node (has both positive and negative)
+            widgets = node_info.get('widgets_values', [])
+            class_type_lower = node_info.get('class_type', '').lower()
             
-            if prompt_text:
-                # Find which node this connects to and get order info
+            # Detect dual-prompt nodes (e.g., quadmoonCLIPTextEncode2)
+            # Find first two string widgets that look like prompts
+            positive_text = None
+            negative_text = None
+            
+            if 'encode2' in class_type_lower or 'dual' in class_type_lower:
+                string_widgets = [w for w in widgets if isinstance(w, str) and len(w.strip()) > 0]
+                if len(string_widgets) >= 2:
+                    positive_text = string_widgets[0]
+                    negative_text = string_widgets[1]
+            
+            is_dual_prompt = positive_text is not None and negative_text is not None
+            
+            if is_dual_prompt:
+                
+                # Find connected nodes
                 connected_nodes = []
                 for conn_id, conn in self.connections.items():
                     if conn['source_node'] == node_id:
@@ -360,29 +376,76 @@ class WorkflowParser:
                             'order': target_order
                         })
                 
-                # Get this node's order
                 node_order = node_info.get('order', 999)
-                
-                # Build a description of the conditioning path
                 path_description = f"{node_info.get('class_type', '')} (node {node_id})"
                 if connected_nodes:
                     next_nodes = ", ".join([f"{n['class_type']} (node {n['node_id']})" for n in connected_nodes])
                     path_description += f" → {next_nodes}"
                 
-                prompt_entry = {
-                    'node_id': node_id,
-                    'class_type': node_info.get('class_type', ''),
-                    'text': prompt_text,
-                    'type': prompt_type,
-                    'order': node_order,
-                    'connects_to': connected_nodes,
-                    'path': path_description
-                }
+                # Add positive prompt
+                if positive_text:
+                    self.prompts['positive'].append({
+                        'node_id': node_id,
+                        'class_type': node_info.get('class_type', ''),
+                        'text': positive_text,
+                        'type': 'positive',
+                        'order': node_order,
+                        'connects_to': connected_nodes,
+                        'path': path_description
+                    })
                 
-                if prompt_type == 'positive':
-                    self.prompts['positive'].append(prompt_entry)
-                elif prompt_type == 'negative':
-                    self.prompts['negative'].append(prompt_entry)
+                # Add negative prompt
+                if negative_text:
+                    self.prompts['negative'].append({
+                        'node_id': node_id,
+                        'class_type': node_info.get('class_type', ''),
+                        'text': negative_text,
+                        'type': 'negative',
+                        'order': node_order,
+                        'connects_to': connected_nodes,
+                        'path': path_description
+                    })
+            else:
+                # Single-prompt node - use existing logic
+                prompt_text = self._extract_prompt_text_with_trace(node_id, node_info)
+                
+                if prompt_text:
+                    # Find which node this connects to and get order info
+                    connected_nodes = []
+                    for conn_id, conn in self.connections.items():
+                        if conn['source_node'] == node_id:
+                            target_id = conn['target_node']
+                            target_class = self.nodes.get(target_id, {}).get('class_type', 'Unknown')
+                            target_order = self.nodes.get(target_id, {}).get('order', 999)
+                            connected_nodes.append({
+                                'node_id': target_id,
+                                'class_type': target_class,
+                                'order': target_order
+                            })
+                    
+                    # Get this node's order
+                    node_order = node_info.get('order', 999)
+                    
+                    # Build a description of the conditioning path
+                    path_description = f"{node_info.get('class_type', '')} (node {node_id})"
+                    if connected_nodes:
+                        next_nodes = ", ".join([f"{n['class_type']} (node {n['node_id']})" for n in connected_nodes])
+                        path_description += f" → {next_nodes}"
+                    
+                    prompt_entry = {
+                        'node_id': node_id,
+                        'class_type': node_info.get('class_type', ''),
+                        'text': prompt_text,
+                        'type': prompt_type,
+                        'order': node_order,
+                        'connects_to': connected_nodes,
+                        'path': path_description
+                    }
+                    
+                    if prompt_type == 'positive':
+                        self.prompts['positive'].append(prompt_entry)
+                    elif prompt_type == 'negative':
+                        self.prompts['negative'].append(prompt_entry)
         
         # Deduplicate prompts with same text - merge their connections
         self._deduplicate_prompts()
@@ -434,6 +497,101 @@ class WorkflowParser:
         self.loras.sort(key=lambda x: x['order'])
         
         return self.loras
+    
+    def detect_models(self) -> list:
+        """
+        Detect checkpoint/model files used in the workflow.
+        
+        Identifies model loader nodes and extracts model filenames:
+        - CheckpointLoader (standard models)
+        - UNETLoader (GGUF models)
+        - Traces connections to find models passed through other nodes
+        
+        Returns:
+            List of model dictionaries
+        """
+        if not self.nodes:
+            return self.models
+        
+        # Model loader node patterns
+        model_loader_patterns = [
+            'checkpointloader',
+            'unetloader',
+            'checkpoint',
+            'modelloader',
+        ]
+        
+        for node_id, node_info in self.nodes.items():
+            class_type = node_info.get('class_type', '').lower()
+            
+            # Check if this is a model loader node
+            is_model_loader = any(pattern in class_type for pattern in model_loader_patterns)
+            
+            if is_model_loader:
+                # Extract model name from widget_values or inputs
+                model_name = None
+                
+                # Try widget_values first
+                widgets = node_info.get('widgets_values', [])
+                if widgets and len(widgets) > 0:
+                    # First widget is usually the model name
+                    if isinstance(widgets[0], str):
+                        model_name = widgets[0]
+                
+                # If no widget value, check inputs for connections
+                if not model_name:
+                    inputs = node_info.get('inputs', [])
+                    for inp in inputs:
+                        if isinstance(inp, dict) and inp.get('link'):
+                            # Trace back to find the model name
+                            model_name = self._trace_model_input(inp['link'])
+                            if model_name:
+                                break
+                
+                if model_name and model_name != "None":
+                    model_entry = {
+                        'node_id': node_id,
+                        'class_type': node_info.get('class_type', ''),
+                        'model_name': model_name,
+                        'order': node_info.get('order', 999)
+                    }
+                    self.models.append(model_entry)
+        
+        # Sort by execution order and deduplicate
+        self.models.sort(key=lambda x: x['order'])
+        
+        # Deduplicate by model name (keep first occurrence)
+        seen = set()
+        unique_models = []
+        for model in self.models:
+            if model['model_name'] not in seen:
+                seen.add(model['model_name'])
+                unique_models.append(model)
+        
+        self.models = unique_models
+        return self.models
+    
+    def _trace_model_input(self, link_id: int) -> Optional[str]:
+        """
+        Trace a connection to find the model name.
+        
+        Args:
+            link_id: Connection link ID to trace
+            
+        Returns:
+            Model name if found, None otherwise
+        """
+        # Find the connection
+        for conn_id, conn in self.connections.items():
+            if conn_id == str(link_id):
+                source_node_id = conn.get('source_node')
+                if source_node_id and source_node_id in self.nodes:
+                    source_node = self.nodes[source_node_id]
+                    widgets = source_node.get('widgets_values', [])
+                    if widgets and len(widgets) > 0 and isinstance(widgets[0], str):
+                        return widgets[0]
+        
+        return None
     
     def detect_controlnet(self) -> bool:
         """
@@ -806,6 +964,7 @@ class WorkflowParser:
         self.build_connections_dictionary()
         self.detect_prompts()
         self.detect_loras()
+        self.detect_models()
         self.detect_controlnet()
         self.detect_ai_prompt_enhancement()
         

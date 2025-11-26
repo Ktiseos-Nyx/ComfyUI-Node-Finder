@@ -72,6 +72,7 @@ def display_workflow_summary(parser: WorkflowParser, nodes: Dict, prompts: Dict,
     print(f"   Total Nodes: {len(nodes)}")
     print(f"   Positive Prompts: {len(prompts.get('positive', []))}")
     print(f"   Negative Prompts: {len(prompts.get('negative', []))}")
+    print(f"   Models Used: {len(parser.models)}")
     print(f"   LoRAs Used: {len(loras)}")
     
     # ControlNet warning
@@ -87,6 +88,12 @@ def display_workflow_summary(parser: WorkflowParser, nodes: Dict, prompts: Dict,
         print(f"   The displayed prompts may have been modified by AI:")
         for enhancer in parser.ai_prompt_enhancers:
             print(f"   - {enhancer['class_type']} (Node {enhancer['node_id']})")
+    
+    # Display Models
+    if parser.models:
+        print(f"\n🎯 Models:")
+        for i, model in enumerate(parser.models, 1):
+            print(f"   [{i}] {model['model_name']}")
     
     # Display LoRAs
     if loras:
@@ -191,25 +198,71 @@ def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIS
             
             # Search for unknown nodes
             print(f"\n🔍 Searching for {len(unknown_nodes)} node(s)...")
-            results = {}
+            results = {}  # node_name -> first result (for compatibility)
+            all_results = {}  # node_name -> list of all results
             github_searches = 0
             for i, node_name in enumerate(unknown_nodes, 1):
-                result = finder.search_node_class(node_name)
-                results[node_name] = result
+                # Get ALL possible repos for this node
+                node_results = finder.search_node_class_all(node_name)
+                all_results[node_name] = node_results
                 
-                if result:
-                    source = result.get('source', 'unknown')
-                    print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {result['repo_name']} ({source})")
+                if node_results:
+                    # Use first result for compatibility
+                    results[node_name] = node_results[0]
                     
-                    # Only delay if we had to use GitHub search
-                    if source == 'github' and i < len(unknown_nodes):
-                        github_searches += 1
-                        time.sleep(2)  # Rate limit only GitHub API calls
+                    if len(node_results) == 1:
+                        source = node_results[0].get('source', 'unknown')
+                        print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {node_results[0]['repo_name']} ({source})")
+                    else:
+                        print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {len(node_results)} possible repos")
+                        for j, res in enumerate(node_results, 1):
+                            print(f"       {j}. {res['repo_name']} ({res.get('source', 'unknown')})")
                 else:
-                    print(f"   [{i}/{len(unknown_nodes)}] ✗ Not found: {node_name}")
+                    # Fall back to GitHub search
+                    result = finder.search_node_class(node_name)
+                    results[node_name] = result
+                    all_results[node_name] = [result] if result else []
+                    
+                    if result:
+                        source = result.get('source', 'unknown')
+                        print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {result['repo_name']} ({source})")
+                        
+                        # Only delay if we had to use GitHub search
+                        if source == 'github' and i < len(unknown_nodes):
+                            github_searches += 1
+                            time.sleep(2)  # Rate limit only GitHub API calls
+                    else:
+                        print(f"   [{i}/{len(unknown_nodes)}] ✗ Not found: {node_name}")
             
             # Handle found repositories and return whether any were downloaded
             if any(results.values()):
+                # Check which repos are already installed
+                from pathlib import Path
+                custom_nodes_dir = Path(comfyui_path) / "custom_nodes"
+                installed_repos = set()
+                if custom_nodes_dir.exists():
+                    installed_repos = {d.name for d in custom_nodes_dir.iterdir() if d.is_dir() and not d.name.startswith('.')}
+                
+                # Group results by repo and check if installed
+                repo_groups = {}
+                for node_name, result in results.items():
+                    if result:
+                        repo_name = result['repo_name']
+                        if repo_name not in repo_groups:
+                            repo_groups[repo_name] = {'nodes': [], 'result': result, 'installed': repo_name in installed_repos}
+                        repo_groups[repo_name]['nodes'].append(node_name)
+                
+                # Show which repos might already be installed
+                already_installed = [repo for repo, info in repo_groups.items() if info['installed']]
+                if already_installed:
+                    print(f"\n⚠️  Note: {len(already_installed)} repo(s) appear to be already installed:")
+                    for repo in already_installed:
+                        nodes = repo_groups[repo]['nodes']
+                        print(f"   - {repo}")
+                        print(f"     Nodes: {', '.join(nodes)}")
+                    print(f"\n   These nodes may be registered differently than expected.")
+                    print(f"   The scanner may have had trouble detecting them (e.g., web-only nodes, dynamic registration).")
+                
                 repos_downloaded = finder.handle_found_repos(results, comfyui_path)
                 return repos_downloaded
         

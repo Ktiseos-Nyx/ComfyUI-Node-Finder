@@ -13,6 +13,9 @@ from typing import Dict, Set, Optional, Tuple
 class ScanCache:
     """Manages caching of ComfyUI node scan results."""
     
+    # Increment this when scanner logic changes to invalidate old caches
+    CACHE_VERSION = 2  # Updated for static analyzer integration
+    
     def __init__(self, cache_dir: str = ".cache"):
         """
         Initialize the scan cache.
@@ -113,6 +116,7 @@ class ScanCache:
             
             # Save metadata
             metadata = {
+                'version': self.CACHE_VERSION,
                 'comfyui_path': str(comfyui_path),
                 'builtin_count': len(builtin_nodes),
                 'custom_count': len(custom_nodes),
@@ -129,15 +133,23 @@ class ScanCache:
     
     def load_scan_results(self) -> Optional[Tuple[Set[str], Dict[str, str]]]:
         """
-        Load cached scan results.
+        Load scan results from cache.
         
         Returns:
             Tuple of (builtin_nodes, custom_nodes) or None if cache doesn't exist
         """
-        if not self.builtin_cache.exists() or not self.custom_cache.exists():
-            return None
-        
         try:
+            if not self.builtin_cache.exists() or not self.custom_cache.exists():
+                return None
+            
+            # Check cache version
+            if self.metadata_cache.exists():
+                with open(self.metadata_cache, 'r') as f:
+                    metadata = json.load(f)
+                    if metadata.get('version', 1) != self.CACHE_VERSION:
+                        print(f"   Cache version mismatch (found {metadata.get('version', 1)}, need {self.CACHE_VERSION}). Rescanning...")
+                        return None
+        
             # Load builtin nodes
             with open(self.builtin_cache, 'rb') as f:
                 builtin_nodes = pickle.load(f)
