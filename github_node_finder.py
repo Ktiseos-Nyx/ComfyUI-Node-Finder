@@ -19,8 +19,7 @@ from comfyui_scanner import ComfyUIScanner
 class GitHubNodeFinder:
     """Find GitHub repositories for ComfyUI node classes."""
     
-    REGISTRY_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json"
-    COMFY_REGISTRY_API = "https://api.comfy.org/nodes"
+    NODE_MAP_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json"
     
     def __init__(self, github_token: str):
         """
@@ -48,152 +47,52 @@ class GitHubNodeFinder:
         # Cache to avoid duplicate searches
         self.cache = {}
         
-        # ComfyUI Manager registry cache (old format)
-        self.registry = None
-        self.registry_by_title = {}
-        self.registry_by_reference = {}
-        
-        # Comfy Registry API cache (new format - all nodes)
-        self.comfy_registry = []
-        self.comfy_registry_loaded = False
+        # Extension-node map (class name → repository URL)
+        # This is the definitive source ComfyUI Manager uses
+        self.node_map = {}  # Maps class_name → repo_url
+        self.node_map_loaded = False
     
-    def load_comfyui_registry(self) -> bool:
+    def load_node_map(self) -> bool:
         """
-        Load the ComfyUI Manager registry of custom nodes.
+        Load the extension-node-map.json which maps class names to repository URLs.
+        This is the definitive source that ComfyUI Manager uses.
         
         Returns:
             True if loaded successfully
         """
-        if self.registry is not None:
-            return True  # Already loaded
+        if self.node_map_loaded:
+            return True
         
         try:
-            print("📥 Loading ComfyUI Manager registry...")
-            response = requests.get(self.REGISTRY_URL, timeout=10)
+            print("📥 Loading ComfyUI Manager extension-node map...")
+            response = requests.get(self.NODE_MAP_URL, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
-                self.registry = data.get('custom_nodes', [])
                 
-                # Build lookup dictionaries
-                for node in self.registry:
-                    title = node.get('title', '').lower()
-                    reference = node.get('reference', '').lower()
-                    
-                    if title:
-                        self.registry_by_title[title] = node
-                    if reference:
-                        self.registry_by_reference[reference] = node
+                # Build reverse map: class_name → repo_url
+                for repo_url, node_data in data.items():
+                    # node_data is [['NodeClass1', 'NodeClass2'], {'title_aux': 'Title'}]
+                    if isinstance(node_data, list) and len(node_data) > 0:
+                        node_classes = node_data[0]
+                        if isinstance(node_classes, list):
+                            for class_name in node_classes:
+                                self.node_map[class_name] = repo_url
                 
-                print(f"✓ Loaded {len(self.registry)} custom nodes from registry")
+                self.node_map_loaded = True
+                print(f"✓ Loaded {len(self.node_map)} node class mappings")
                 return True
             else:
-                print(f"⚠ Failed to load registry: HTTP {response.status_code}")
+                print(f"⚠ Failed to load node map: HTTP {response.status_code}")
                 return False
-                
+        
         except Exception as e:
-            print(f"⚠ Error loading registry: {e}")
+            print(f"⚠ Error loading node map: {e}")
             return False
-    
-    def load_comfy_registry_all(self) -> bool:
-        """
-        Load ALL nodes from the Comfy Registry API (paginated).
-        
-        Returns:
-            True if loaded successfully
-        """
-        if self.comfy_registry_loaded:
-            return True  # Already loaded
-        
-        try:
-            print("📥 Loading Comfy Registry (all nodes)...")
-            all_nodes = []
-            page = 1
-            limit = 100  # Max per page
-            
-            while True:
-                params = {
-                    'page': page,
-                    'limit': limit
-                }
-                
-                response = requests.get(self.COMFY_REGISTRY_API, params=params, timeout=30)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    nodes = data.get('nodes', [])
-                    
-                    if not nodes:
-                        break  # No more nodes
-                    
-                    all_nodes.extend(nodes)
-                    
-                    total_pages = data.get('totalPages', 1)
-                    print(f"   Loaded page {page}/{total_pages} ({len(all_nodes)} nodes so far)...")
-                    
-                    if page >= total_pages:
-                        break
-                    
-                    page += 1
-                    
-                    # Add delay between pages to be nice to the API
-                    if page <= total_pages:
-                        time.sleep(0.5)
-                else:
-                    print(f"⚠ Failed to load Comfy Registry: HTTP {response.status_code}")
-                    return False
-            
-            self.comfy_registry = all_nodes
-            self.comfy_registry_loaded = True
-            print(f"✓ Loaded {len(all_nodes)} nodes from Comfy Registry")
-            return True
-            
-        except Exception as e:
-            print(f"⚠ Error loading Comfy Registry: {e}")
-            return False
-    
-    def search_in_registry(self, class_name: str) -> Optional[Dict]:
-        """
-        Search for a node in the Comfy Registry (all nodes loaded locally).
-        
-        Args:
-            class_name: The node class name to search for
-            
-        Returns:
-            Dictionary with repository info or None if not found
-        """
-        # Load all registry data once
-        if not self.load_comfy_registry_all():
-            return None
-        
-        class_lower = class_name.lower()
-        
-        # Search through all loaded nodes
-        for node in self.comfy_registry:
-            name = node.get('name', '').lower()
-            description = node.get('description', '').lower()
-            node_id = node.get('id', '').lower()
-            
-            # Check if class name appears in name, description, or ID
-            if (class_lower in name or 
-                class_lower in description or 
-                class_lower in node_id):
-                
-                return {
-                    'repo_name': node.get('repository', '').split('/')[-1] if node.get('repository') else node.get('id', ''),
-                    'repo_url': node.get('repository', ''),
-                    'description': node.get('description', ''),
-                    'author': node.get('publisher', {}).get('name', 'unknown') if isinstance(node.get('publisher'), dict) else 'unknown',
-                    'title': node.get('name', class_name),
-                    'downloads': node.get('downloads', 0),
-                    'stars': node.get('github_stars', 0)
-                }
-        
-        return None
     
     def search_node_class(self, class_name: str) -> Optional[Dict]:
         """
-        Search for a ComfyUI node class, first in registry then GitHub.
+        Search for a ComfyUI node class in node map, then fall back to GitHub.
         
         Args:
             class_name: The node class name to search for
@@ -205,11 +104,21 @@ class GitHubNodeFinder:
         if class_name in self.cache:
             return self.cache[class_name]
         
-        # Try ComfyUI Manager registry first (no rate limits!)
-        registry_result = self.search_in_registry(class_name)
-        if registry_result:
-            self.cache[class_name] = registry_result
-            return registry_result
+        # Try extension-node map first (exact class name → repo URL mapping!)
+        if not self.load_node_map():
+            print("⚠ Failed to load node map, falling back to GitHub search")
+        elif class_name in self.node_map:
+            repo_url = self.node_map[class_name]
+            result = {
+                'repo_name': repo_url.split('/')[-1],
+                'repo_url': repo_url,
+                'description': f'Found in ComfyUI Manager node map',
+                'author': repo_url.split('/')[-2] if '/' in repo_url else 'unknown',
+                'title': class_name,
+                'source': 'node_map'
+            }
+            self.cache[class_name] = result
+            return result
         
         # Search GitHub code for the class name
         search_query = f"{class_name} comfyui"
@@ -343,7 +252,8 @@ class GitHubNodeFinder:
                 "description": repo.get("description", "No description"),
                 "stars": repo.get("stargazers_count", 0),
                 "file_path": item.get("path"),
-                "file_url": item.get("html_url")
+                "file_url": item.get("html_url"),
+                "source": "github"
             }
         
         return None

@@ -147,8 +147,7 @@ def analyze_nodes(nodes: Dict, scanner: ComfyUIScanner) -> Dict[str, str]:
     return unique_nodes
 
 
-def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIScanner, 
-                   comfyui_path: Optional[str], token_mgr: TokenManager):
+def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIScanner, comfyui_path: str, token_mgr: TokenManager, finder: GitHubNodeFinder = None) -> bool:
     """Perform deep dive analysis and offer to download missing nodes."""
     print("\n" + "=" * 80)
     print("DEEP DIVE - NODE DETAILS")
@@ -176,35 +175,38 @@ def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIS
             print(f"   - {node}")
         
         # Offer to search GitHub
-        search = input(f"\n🔍 Search GitHub for missing nodes? (y/n) [y]: ").strip().lower() or 'y'
+        search = input(f"\n🔍 Search for missing nodes repositories? (y/n) [y]: ").strip().lower() or 'y'
         
         if search == 'y':
-            # Get or prompt for GitHub token
-            github_token = token_mgr.get_or_prompt_token(auto_use=True)
-            
-            if not github_token:
-                print("\n⚠️  No GitHub token provided. Cannot search GitHub.")
-                return
-            
-            # Initialize finder
-            finder = GitHubNodeFinder(github_token=github_token)
+            # Initialize finder if not provided
+            if not finder:
+                # Get or prompt for GitHub token
+                github_token = token_mgr.get_or_prompt_token(auto_use=True)
+                
+                if not github_token:
+                    print("\n⚠️  No GitHub token provided. Cannot search GitHub.")
+                    return
+                
+                finder = GitHubNodeFinder(github_token=github_token)
             
             # Search for unknown nodes
-            print(f"\n🔍 Searching GitHub for {len(unknown_nodes)} node(s)...")
-            print(f"   (Adding delays to avoid rate limiting...)")
+            print(f"\n🔍 Searching for {len(unknown_nodes)} node(s)...")
             results = {}
+            github_searches = 0
             for i, node_name in enumerate(unknown_nodes, 1):
                 result = finder.search_node_class(node_name)
                 results[node_name] = result
                 
                 if result:
-                    print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {result['repo_name']}")
+                    source = result.get('source', 'unknown')
+                    print(f"   [{i}/{len(unknown_nodes)}] ✓ Found: {node_name} -> {result['repo_name']} ({source})")
+                    
+                    # Only delay if we had to use GitHub search
+                    if source == 'github' and i < len(unknown_nodes):
+                        github_searches += 1
+                        time.sleep(2)  # Rate limit only GitHub API calls
                 else:
                     print(f"   [{i}/{len(unknown_nodes)}] ✗ Not found: {node_name}")
-                
-                # Add delay between requests to avoid rate limiting (except for last one)
-                if i < len(unknown_nodes):
-                    time.sleep(2)  # 2 second delay between searches
             
             # Handle found repositories and return whether any were downloaded
             if any(results.values()):
@@ -214,7 +216,7 @@ def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIS
         return False
 
 
-def process_workflow(scanner: Optional[ComfyUIScanner], comfyui_path: Optional[str], token_mgr: TokenManager) -> bool:
+def process_workflow(scanner: ComfyUIScanner, comfyui_path: str, token_mgr: TokenManager, finder: GitHubNodeFinder = None) -> bool:
     """
     Process a single workflow image.
     
@@ -255,7 +257,7 @@ def process_workflow(scanner: Optional[ComfyUIScanner], comfyui_path: Optional[s
         deep_dive = input(f"\n🔬 Perform deep dive into nodes? (y/n) [n]: ").strip().lower()
         
         if deep_dive == 'y':
-            repos_downloaded = deep_dive_nodes(nodes, unique_nodes, scanner, comfyui_path, token_mgr)
+            repos_downloaded = deep_dive_nodes(nodes, unique_nodes, scanner, comfyui_path, token_mgr, finder)
     else:
         print("\n⚠️  Skipping node analysis (ComfyUI path not provided)")
     
@@ -282,12 +284,19 @@ def main():
     else:
         print("\n⚠️  No ComfyUI path provided. Node classification will be limited.")
     
+    # Initialize GitHubNodeFinder once for the entire session
+    finder = None
+    github_token = token_mgr.get_or_prompt_token(auto_use=True)
+    if github_token:
+        print("\n🔧 Initializing GitHub node finder...")
+        finder = GitHubNodeFinder(github_token=github_token)
+    
     # Main workflow processing loop
     while True:
         print("\n" + "=" * 80)
         
         # Process workflow and check if repos were downloaded
-        repos_downloaded = process_workflow(scanner, comfyui_path, token_mgr)
+        repos_downloaded = process_workflow(scanner, comfyui_path, token_mgr, finder)
         
         # If no image was provided, exit
         if not repos_downloaded:
