@@ -97,16 +97,20 @@ def display_workflow_summary(parser: WorkflowParser, nodes: Dict, prompts: Dict,
     
     # Display prompts (preview)
     if prompts.get('positive'):
-        print(f"\n📝 Positive Prompt Preview:")
-        for prompt in prompts['positive'][:1]:  # Show first one
+        print(f"\n📝 Positive Prompts:")
+        for i, prompt in enumerate(prompts['positive'], 1):
             preview = prompt['text'][:100] + '...' if len(prompt['text']) > 100 else prompt['text']
-            print(f"   {preview}")
+            print(f"   [{i}] {preview}")
+            if 'path' in prompt:
+                print(f"       Path: {prompt['path']}")
     
     if prompts.get('negative'):
-        print(f"\n🚫 Negative Prompt Preview:")
-        for prompt in prompts['negative'][:1]:  # Show first one
+        print(f"\n🚫 Negative Prompts:")
+        for i, prompt in enumerate(prompts['negative'], 1):
             preview = prompt['text'][:100] + '...' if len(prompt['text']) > 100 else prompt['text']
-            print(f"   {preview}")
+            print(f"   [{i}] {preview}")
+            if 'path' in prompt:
+                print(f"       Path: {prompt['path']}")
 
 
 def analyze_nodes(nodes: Dict, scanner: ComfyUIScanner) -> Dict[str, str]:
@@ -202,36 +206,25 @@ def deep_dive_nodes(nodes: Dict, unique_nodes: Dict[str, str], scanner: ComfyUIS
                 if i < len(unknown_nodes):
                     time.sleep(2)  # 2 second delay between searches
             
-            # Handle found repositories
+            # Handle found repositories and return whether any were downloaded
             if any(results.values()):
-                finder.handle_found_repos(results, comfyui_path)
+                repos_downloaded = finder.handle_found_repos(results, comfyui_path)
+                return repos_downloaded
+        
+        return False
 
 
-def main():
-    """Main entry point for the workflow analyzer."""
-    print("=" * 80)
-    print("ComfyUI Workflow Analyzer")
-    print("=" * 80)
+def process_workflow(scanner: Optional[ComfyUIScanner], comfyui_path: Optional[str], token_mgr: TokenManager) -> bool:
+    """
+    Process a single workflow image.
     
+    Returns:
+        True if repositories were downloaded (need to rescan)
+    """
     # Get image path
     image_path = get_image_path()
     if not image_path:
-        print("❌ No image path provided. Exiting.")
-        return
-    
-    # Load configuration using TokenManager
-    token_mgr = TokenManager()
-    comfyui_path = token_mgr.get_or_prompt_comfyui_location(auto_use=True)
-    github_token = token_mgr.load_token()  # Load but don't prompt yet
-    
-    # Initialize scanner if ComfyUI path is available
-    scanner = None
-    if comfyui_path:
-        print(f"\n📁 ComfyUI Location: {comfyui_path}")
-        scanner = ComfyUIScanner(comfyui_path)
-        scanner.scan_all()
-    else:
-        print("\n⚠️  Skipping node classification (no ComfyUI path provided)")
+        return False  # Exit program
     
     # Parse workflow
     print(f"\n📄 Parsing workflow from: {image_path}")
@@ -242,7 +235,7 @@ def main():
         print(f"✓ Parsing complete!")
     except Exception as e:
         print(f"❌ Error parsing workflow: {e}")
-        return
+        return False
     
     # Get output format and save
     outputs = get_output_format()
@@ -254,6 +247,7 @@ def main():
     display_workflow_summary(parser, nodes, prompts, loras)
     
     # Analyze nodes if scanner is available
+    repos_downloaded = False
     if scanner:
         unique_nodes = analyze_nodes(nodes, scanner)
         
@@ -261,9 +255,56 @@ def main():
         deep_dive = input(f"\n🔬 Perform deep dive into nodes? (y/n) [n]: ").strip().lower()
         
         if deep_dive == 'y':
-            deep_dive_nodes(nodes, unique_nodes, scanner, comfyui_path, token_mgr)
+            repos_downloaded = deep_dive_nodes(nodes, unique_nodes, scanner, comfyui_path, token_mgr)
     else:
         print("\n⚠️  Skipping node analysis (ComfyUI path not provided)")
+    
+    return repos_downloaded
+
+
+def main():
+    """Main entry point for the workflow analyzer."""
+    print("=" * 80)
+    print("ComfyUI Workflow Analyzer")
+    print("=" * 80)
+    
+    # Load configuration using TokenManager
+    token_mgr = TokenManager()
+    comfyui_path = token_mgr.get_or_prompt_comfyui_location(auto_use=True)
+    
+    # Initialize scanner if ComfyUI path is available
+    scanner = None
+    if comfyui_path:
+        print(f"\n📁 ComfyUI Location: {comfyui_path}")
+        scanner = ComfyUIScanner(comfyui_path)
+        print("\n🔍 Scanning ComfyUI installation...")
+        scanner.scan_all()
+    else:
+        print("\n⚠️  No ComfyUI path provided. Node classification will be limited.")
+    
+    # Main workflow processing loop
+    while True:
+        print("\n" + "=" * 80)
+        
+        # Process workflow and check if repos were downloaded
+        repos_downloaded = process_workflow(scanner, comfyui_path, token_mgr)
+        
+        # If no image was provided, exit
+        if not repos_downloaded:
+            # Check if we should continue with another image
+            continue_prompt = input("\n📸 Analyze another workflow? (y/n) [n]: ").strip().lower()
+            if continue_prompt != 'y':
+                break
+        else:
+            # Repos were downloaded, rescan
+            if scanner and comfyui_path:
+                print("\n🔄 Rescanning custom nodes after repository downloads...")
+                scanner = ComfyUIScanner(comfyui_path)
+                scanner.scan_all()
+                print("✓ Rescan complete!")
+                
+                # Prompt for new image
+                print("\n📸 Please provide a new workflow image to analyze with updated nodes.")
     
     print("\n" + "=" * 80)
     print("✅ Analysis Complete!")

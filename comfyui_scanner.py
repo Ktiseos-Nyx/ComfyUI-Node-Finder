@@ -8,6 +8,7 @@ import ast
 import warnings
 from pathlib import Path
 from typing import Dict, Set, Optional
+from scan_cache import ScanCache
 
 # Suppress SyntaxWarnings from parsing custom node files
 warnings.filterwarnings('ignore', category=SyntaxWarning)
@@ -16,16 +17,19 @@ warnings.filterwarnings('ignore', category=SyntaxWarning)
 class ComfyUIScanner:
     """Scanner for ComfyUI installation to identify node classes."""
     
-    def __init__(self, comfyui_path: Optional[str] = None):
+    def __init__(self, comfyui_path: Optional[str] = None, use_cache: bool = True):
         """
         Initialize the ComfyUI scanner.
         
         Args:
             comfyui_path: Path to ComfyUI installation (will prompt if not provided)
+            use_cache: Whether to use cached scan results
         """
         self.comfyui_path = None
         self.builtin_nodes = set()
         self.custom_nodes = {}  # {class_name: repo_path}
+        self.use_cache = use_cache
+        self.cache = ScanCache() if use_cache else None
         
         if comfyui_path:
             self.set_comfyui_path(comfyui_path)
@@ -273,10 +277,13 @@ class ComfyUIScanner:
         
         return mappings
     
-    def scan_all(self) -> tuple[Set[str], Dict[str, str]]:
+    def scan_all(self, force_rescan: bool = False) -> tuple[Set[str], Dict[str, str]]:
         """
-        Scan both built-in and custom nodes.
+        Scan both built-in and custom nodes, using cache if available.
         
+        Args:
+            force_rescan: Force a full rescan even if cache is valid
+            
         Returns:
             Tuple of (builtin_nodes, custom_nodes)
         """
@@ -284,8 +291,36 @@ class ComfyUIScanner:
             if not self.prompt_for_path():
                 return set(), {}
         
+        # Try to load from cache if enabled
+        if self.use_cache and not force_rescan:
+            # Check if custom_nodes directory has changed
+            if not self.cache.has_changed(self.comfyui_path):
+                # Try to load cached results
+                cached_results = self.cache.load_scan_results()
+                if cached_results:
+                    self.builtin_nodes, self.custom_nodes = cached_results
+                    metadata = self.cache.get_metadata()
+                    if metadata:
+                        print(f"✓ Loaded from cache: {metadata['builtin_count']} built-in, "
+                              f"{metadata['custom_count']} custom nodes from {metadata['total_repos']} repos")
+                    else:
+                        print(f"✓ Loaded from cache: {len(self.builtin_nodes)} built-in, "
+                              f"{len(self.custom_nodes)} custom nodes")
+                    return self.builtin_nodes, self.custom_nodes
+                else:
+                    print("⚠ Cache exists but failed to load, rescanning...")
+            else:
+                print("📁 Custom nodes directory changed, rescanning...")
+        
+        # Perform full scan
+        print("🔍 Scanning ComfyUI installation...")
         self.scan_builtin_nodes()
         self.scan_custom_nodes()
+        
+        # Save to cache if enabled
+        if self.use_cache:
+            self.cache.save_scan_results(self.builtin_nodes, self.custom_nodes, self.comfyui_path)
+            print("💾 Scan results cached")
         
         return self.builtin_nodes, self.custom_nodes
     

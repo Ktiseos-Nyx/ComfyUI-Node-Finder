@@ -310,6 +310,12 @@ class WorkflowParser:
         
         # Trace connections to determine if positive or negative
         for node_id, node_info in conditioning_nodes.items():
+            # Skip disabled/muted nodes
+            # mode: 0 = active, 2 = muted/bypassed, 4 = never/disabled
+            node_mode = node_info.get('mode', 0)
+            if node_mode in [2, 4]:
+                continue
+            
             # Follow the conditioning chain forward to find final destination
             prompt_type = self._trace_conditioning_chain(node_id)
             
@@ -357,13 +363,20 @@ class WorkflowParser:
                 # Get this node's order
                 node_order = node_info.get('order', 999)
                 
+                # Build a description of the conditioning path
+                path_description = f"{node_info.get('class_type', '')} (node {node_id})"
+                if connected_nodes:
+                    next_nodes = ", ".join([f"{n['class_type']} (node {n['node_id']})" for n in connected_nodes])
+                    path_description += f" → {next_nodes}"
+                
                 prompt_entry = {
                     'node_id': node_id,
                     'class_type': node_info.get('class_type', ''),
                     'text': prompt_text,
                     'type': prompt_type,
                     'order': node_order,
-                    'connects_to': connected_nodes
+                    'connects_to': connected_nodes,
+                    'path': path_description
                 }
                 
                 if prompt_type == 'positive':
@@ -523,12 +536,17 @@ class WorkflowParser:
                         'node_ids': [],
                         'class_types': set(),
                         'orders': [],
-                        'connects_to': []
+                        'connects_to': [],
+                        'paths': []
                     }
                 
                 text_groups[text]['node_ids'].append(prompt['node_id'])
                 text_groups[text]['class_types'].add(prompt['class_type'])
                 text_groups[text]['orders'].append(prompt['order'])
+                
+                # Store path if present
+                if 'path' in prompt:
+                    text_groups[text]['paths'].append(prompt['path'])
                 
                 # Merge connections
                 for conn in prompt.get('connects_to', []):
@@ -548,20 +566,29 @@ class WorkflowParser:
                 else:
                     node_id_str = group['node_ids'][0]
                 
-                deduplicated.append({
+                # Combine paths if multiple
+                path_str = ' | '.join(group['paths']) if group['paths'] else None
+                
+                entry = {
                     'node_id': node_id_str,
                     'class_type': ', '.join(group['class_types']),
                     'text': text,
                     'type': prompt_type,
                     'order': min_order,
                     'connects_to': sorted(group['connects_to'], key=lambda x: x['order'])
-                })
+                }
+                
+                if path_str:
+                    entry['path'] = path_str
+                
+                deduplicated.append(entry)
             
             self.prompts[prompt_type] = deduplicated
     
     def _trace_conditioning_chain(self, node_id: str, visited: Optional[set] = None) -> Optional[str]:
         """
         Trace a conditioning node forward through the chain to find if it connects to positive/negative.
+        Also handles FLUX-style GUIDER workflows where there's no explicit positive/negative.
         
         Args:
             node_id: ID of the conditioning node
@@ -582,6 +609,7 @@ class WorkflowParser:
             if conn['source_node'] == node_id:
                 target_node_id = conn['target_node']
                 target_input = conn['target_input']
+                target_class = self.nodes.get(target_node_id, {}).get('class_type', '').lower()
                 
                 # Get the actual input name (might be an index or a name)
                 input_name = self._get_input_name(target_node_id, target_input)
@@ -595,12 +623,18 @@ class WorkflowParser:
                     elif 'negative' in input_name_lower:
                         return 'negative'
                 
+                # Check if target is a GUIDER node (FLUX-style workflows)
+                # Guider nodes take conditioning and output to samplers - treat as positive
+                if 'guider' in target_class or 'guidance' in target_class:
+                    return 'positive'
+                
                 # If not, check if the target is also a conditioning node (chain continues)
                 if target_node_id in self.io_map:
                     outputs = self.io_map[target_node_id].get('outputs', {})
                     for output_name, output_info in outputs.items():
-                        if output_info.get('type', '').upper() == 'CONDITIONING':
-                            # Continue tracing through this conditioning node
+                        output_type = output_info.get('type', '').upper()
+                        if output_type == 'CONDITIONING' or output_type == 'GUIDER':
+                            # Continue tracing through this conditioning/guider node
                             result = self._trace_conditioning_chain(target_node_id, visited)
                             if result:
                                 return result
@@ -699,6 +733,7 @@ class WorkflowParser:
     def _extract_prompt_text_with_trace(self, node_id: str, node_info: Dict[str, Any], visited: Optional[set] = None) -> Optional[str]:
         """
         Extract prompt text from a node, tracing through connections if needed.
+        Now collects ALL text sources in the chain, not just the first one found.
         
         Args:
             node_id: ID of the node to extract text from
@@ -716,15 +751,17 @@ class WorkflowParser:
         visited.add(node_id)
         
         class_type = node_info.get('class_type', '').lower()
+        collected_texts = []
         
-        # Check if this node has text/string input connections first
+        # Check if this node has text/string OR conditioning input connections first
         has_text_connection = False
         if node_id in self.io_map:
             inputs = self.io_map[node_id].get('inputs', {})
             
-            # Look for text/string inputs with connections
+            # Look for text/string/conditioning inputs with connections
             for input_name, input_info in inputs.items():
-                if input_info.get('type', '').upper() in ['STRING', 'TEXT']:
+                input_type = input_info.get('type', '').upper()
+                if input_type in ['STRING', 'TEXT', 'CONDITIONING']:
                     # Check if this input has a connection
                     for conn_id, conn in self.connections.items():
                         if conn['target_node'] == node_id:
@@ -735,30 +772,24 @@ class WorkflowParser:
                                 source_node_id = conn['source_node']
                                 if source_node_id in self.nodes:
                                     source_node_info = self.nodes[source_node_id]
-                                    source_class = source_node_info.get('class_type', '').lower()
-                                    
-                                    # Check if source is a text literal node
-                                    is_text_literal = (
-                                        'string' in source_class and 'literal' in source_class or
-                                        'text' in source_class and 'multiline' in source_class
-                                    )
                                     
                                     # Recursively extract text from source
                                     text = self._extract_prompt_text_with_trace(source_node_id, source_node_info, visited)
                                     if text:
-                                        return text
+                                        collected_texts.append(text)
         
-        # Only try to get text from widget values if there's NO text connection
-        # OR if this is a known text literal node
-        is_text_literal = (
-            'string' in class_type and 'literal' in class_type or
-            'text' in class_type and 'multiline' in class_type
-        )
+        # Check if this node itself has text (even if it has connections)
+        # This catches nodes like CFGlessNegativePrompt that have both connections AND widget text
+        direct_text = self._extract_prompt_text(node_id, node_info)
+        if direct_text:
+            collected_texts.append(direct_text)
         
-        if not has_text_connection or is_text_literal:
-            direct_text = self._extract_prompt_text(node_id, node_info)
-            if direct_text:
-                return direct_text
+        # Return combined text if we found any
+        if collected_texts:
+            # Join multiple texts with a separator to show they're combined
+            if len(collected_texts) > 1:
+                return " | ".join(collected_texts)
+            return collected_texts[0]
         
         return None
     

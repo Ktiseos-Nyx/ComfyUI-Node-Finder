@@ -1715,7 +1715,7 @@
       {
         "node_id": "27",
         "class_type": "CLIPTextEncode",
-        "text": "masterpiece, best quality, good quality, very aesthetic, absurdres, newest, depth of field, focused subject, in the style of cknc, \ndynamic angle, stance, 1girl, solo, long hair, flowing hair, neon hair, bioluminecent glow, parted pink lips, eyeshadow, upper body, sci-fi, looking at viewer, holding futuristic scimitar, unsheating, wind effect,",
+        "text": "masterpiece, best quality, good quality, very aesthetic, absurdres, newest, depth of field, focused subject, in the style of cknc, \ndynamic angle, stance, 1girl, solo, long hair, flowing hair, neon hair, bioluminecent glow, parted pink lips, eyeshadow, upper body, sci-fi, looking at viewer, holding futuristic scimitar, unsheating, wind effect, | Create a list of image generation promptsv following \"My rules\" and \"Prompt Guidence\" and \"prompt help\"(but ignore everything about negative prompting, your only providing the positive prompt). \n\nCreate 10 prompts, do NOT number them, each prompt is detailed and created for image generation. Use take the concept you are given and make each prompt based around that concept. \n\nEach prompt uses danbooru tags then has a few sentinces of plain english description. If the prompt includes a named person (actress, character, etc) then name them but ALSO describe them in detail (this is key as the AI may not know who they are).\nRemember the image is a single moment, image only, no mention of sounds etc\n\nThe concept is: | <think> | The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable | text",
         "type": "positive",
         "order": 35,
         "connects_to": [
@@ -1729,7 +1729,8 @@
             "class_type": "UltimateSDUpscale",
             "order": 38
           }
-        ]
+        ],
+        "path": "CLIPTextEncode (node 27) → UltimateSDUpscale (node 10), KSampler (node 21)"
       }
     ],
     "negative": [
@@ -1750,7 +1751,8 @@
             "class_type": "UltimateSDUpscale",
             "order": 38
           }
-        ]
+        ],
+        "path": "CLIPTextEncode (node 28) → UltimateSDUpscale (node 10), KSampler (node 21)"
       }
     ]
   },

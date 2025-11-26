@@ -20,6 +20,7 @@ class GitHubNodeFinder:
     """Find GitHub repositories for ComfyUI node classes."""
     
     REGISTRY_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json"
+    COMFY_REGISTRY_API = "https://api.comfy.org/nodes"
     
     def __init__(self, github_token: str):
         """
@@ -47,10 +48,14 @@ class GitHubNodeFinder:
         # Cache to avoid duplicate searches
         self.cache = {}
         
-        # ComfyUI Manager registry cache
+        # ComfyUI Manager registry cache (old format)
         self.registry = None
         self.registry_by_title = {}
         self.registry_by_reference = {}
+        
+        # Comfy Registry API cache (new format - all nodes)
+        self.comfy_registry = []
+        self.comfy_registry_loaded = False
     
     def load_comfyui_registry(self) -> bool:
         """
@@ -90,9 +95,66 @@ class GitHubNodeFinder:
             print(f"⚠ Error loading registry: {e}")
             return False
     
+    def load_comfy_registry_all(self) -> bool:
+        """
+        Load ALL nodes from the Comfy Registry API (paginated).
+        
+        Returns:
+            True if loaded successfully
+        """
+        if self.comfy_registry_loaded:
+            return True  # Already loaded
+        
+        try:
+            print("📥 Loading Comfy Registry (all nodes)...")
+            all_nodes = []
+            page = 1
+            limit = 100  # Max per page
+            
+            while True:
+                params = {
+                    'page': page,
+                    'limit': limit
+                }
+                
+                response = requests.get(self.COMFY_REGISTRY_API, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    nodes = data.get('nodes', [])
+                    
+                    if not nodes:
+                        break  # No more nodes
+                    
+                    all_nodes.extend(nodes)
+                    
+                    total_pages = data.get('totalPages', 1)
+                    print(f"   Loaded page {page}/{total_pages} ({len(all_nodes)} nodes so far)...")
+                    
+                    if page >= total_pages:
+                        break
+                    
+                    page += 1
+                    
+                    # Add delay between pages to be nice to the API
+                    if page <= total_pages:
+                        time.sleep(0.5)
+                else:
+                    print(f"⚠ Failed to load Comfy Registry: HTTP {response.status_code}")
+                    return False
+            
+            self.comfy_registry = all_nodes
+            self.comfy_registry_loaded = True
+            print(f"✓ Loaded {len(all_nodes)} nodes from Comfy Registry")
+            return True
+            
+        except Exception as e:
+            print(f"⚠ Error loading Comfy Registry: {e}")
+            return False
+    
     def search_in_registry(self, class_name: str) -> Optional[Dict]:
         """
-        Search for a node in the ComfyUI Manager registry.
+        Search for a node in the Comfy Registry (all nodes loaded locally).
         
         Args:
             class_name: The node class name to search for
@@ -100,35 +162,31 @@ class GitHubNodeFinder:
         Returns:
             Dictionary with repository info or None if not found
         """
-        if not self.load_comfyui_registry():
+        # Load all registry data once
+        if not self.load_comfy_registry_all():
             return None
         
         class_lower = class_name.lower()
         
-        # Try exact title match
-        if class_lower in self.registry_by_title:
-            node = self.registry_by_title[class_lower]
-            return {
-                'repo_name': node.get('reference', '').split('/')[-1],
-                'repo_url': node.get('reference', ''),
-                'description': node.get('description', ''),
-                'author': node.get('author', 'unknown'),
-                'title': node.get('title', class_name)
-            }
-        
-        # Try fuzzy search in titles and descriptions
-        for node in self.registry:
-            title = node.get('title', '').lower()
+        # Search through all loaded nodes
+        for node in self.comfy_registry:
+            name = node.get('name', '').lower()
             description = node.get('description', '').lower()
+            node_id = node.get('id', '').lower()
             
-            # Check if class name appears in title or description
-            if class_lower in title or class_lower in description:
+            # Check if class name appears in name, description, or ID
+            if (class_lower in name or 
+                class_lower in description or 
+                class_lower in node_id):
+                
                 return {
-                    'repo_name': node.get('reference', '').split('/')[-1],
-                    'repo_url': node.get('reference', ''),
+                    'repo_name': node.get('repository', '').split('/')[-1] if node.get('repository') else node.get('id', ''),
+                    'repo_url': node.get('repository', ''),
                     'description': node.get('description', ''),
-                    'author': node.get('author', 'unknown'),
-                    'title': node.get('title', class_name)
+                    'author': node.get('publisher', {}).get('name', 'unknown') if isinstance(node.get('publisher'), dict) else 'unknown',
+                    'title': node.get('name', class_name),
+                    'downloads': node.get('downloads', 0),
+                    'stars': node.get('github_stars', 0)
                 }
         
         return None
@@ -429,13 +487,16 @@ class GitHubNodeFinder:
             print(f"✗ Error cloning repository: {e}")
             return False
     
-    def handle_found_repos(self, results: Dict[str, Optional[Dict]], comfyui_path: Optional[str] = None):
+    def handle_found_repos(self, results: Dict[str, Optional[Dict]], comfyui_path: Optional[str] = None) -> bool:
         """
         Prompt user to download or open found repositories.
         
         Args:
             results: Dictionary of search results
             comfyui_path: Optional path to ComfyUI installation
+            
+        Returns:
+            True if repositories were downloaded
         """
         # Filter to only repos found on GitHub (not local)
         github_repos = {
@@ -445,7 +506,7 @@ class GitHubNodeFinder:
         
         if not github_repos:
             print("\n✓ No new repositories to download")
-            return
+            return False
         
         # Group by repository
         repos_by_url = {}
@@ -454,8 +515,8 @@ class GitHubNodeFinder:
             if repo_url not in repos_by_url:
                 repos_by_url[repo_url] = {
                     'repo_name': info['repo_name'],
-                    'description': info['description'],
-                    'stars': info['stars'],
+                    'description': info.get('description', 'No description'),
+                    'stars': info.get('stars', 0),
                     'nodes': []
                 }
             repos_by_url[repo_url]['nodes'].append(class_name)
@@ -465,7 +526,8 @@ class GitHubNodeFinder:
         print(f"{'=' * 80}\n")
         
         for i, (repo_url, repo_info) in enumerate(sorted(repos_by_url.items()), 1):
-            print(f"{i}. {repo_info['repo_name']} ⭐ {repo_info['stars']}")
+            stars_display = f"⭐ {repo_info['stars']}" if repo_info['stars'] > 0 else ""
+            print(f"{i}. {repo_info['repo_name']} {stars_display}")
             print(f"   {repo_info['description']}")
             print(f"   Nodes: {', '.join(repo_info['nodes'])}")
             print(f"   URL: {repo_url}\n")
@@ -490,6 +552,7 @@ class GitHubNodeFinder:
             confirm = input("Continue? (y/n) [y]: ").strip().lower() or 'y'
             
             if confirm == 'y':
+                repos_cloned = False
                 for repo_url, repo_info in repos_by_url.items():
                     repo_name = repo_info['repo_name'].split('/')[-1]
                     destination = dest_dir / repo_name
@@ -498,11 +561,14 @@ class GitHubNodeFinder:
                         print(f"\n⚠ {repo_name} already exists, skipping...")
                         continue
                     
-                    self.clone_repository(repo_url, destination)
+                    if self.clone_repository(repo_url, destination):
+                        repos_cloned = True
                     time.sleep(1)  # Be nice to GitHub
                 
                 print(f"\n✓ Download complete!")
-                return
+                return repos_cloned
+            
+            return False
         
         # Ask to open in browser
         open_browser = input("\nOpen repositories in browser? (y/n) [n]: ").strip().lower()
@@ -516,6 +582,8 @@ class GitHubNodeFinder:
                 except Exception as e:
                     print(f"✗ Failed to open {repo_url}: {e}")
             print("✓ Done!")
+        
+        return False  # No repos were downloaded
     
     def save_results(self, results: Dict[str, Optional[Dict]], output_path: str):
         """
